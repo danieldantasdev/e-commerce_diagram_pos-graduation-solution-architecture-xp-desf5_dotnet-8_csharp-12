@@ -1,0 +1,226 @@
+@startuml
+scale max 3000 width
+!theme materia
+
+title Arquitetura de Solução E-commerce - Alta Disponibilidade e Escalabilidade
+
+' DEFINIÇÕES DE ESTILO E CORES
+' =============================
+skinparam shadowing true
+
+' Cores para os pacotes (VPC, AZs)
+skinparam package {
+    BackgroundColor #F4F6F6
+    BorderColor #AAB7B8
+    BorderThickness 2
+    FontColor #34495E 
+}
+
+' Cores para as setas e notas
+skinparam arrow {
+    Color #566573
+    Thickness 1.5
+}
+skinparam note {
+    BackgroundColor #FEF9E7
+    BorderColor #F1C40F
+}
+
+' ESTEREÓTIPOS PARA TIPOS DE SERVIÇOS
+' -----------------------------------
+' <<network>> : Componentes de Rede (azul)
+skinparam component<<network>> {
+    BackgroundColor #D6EAF8
+    BorderColor #2E86C1
+    FontColor #1B4F72
+}
+
+' <<compute>> : Componentes de Computação (roxo)
+skinparam component<<compute>> {
+    BackgroundColor #E8DAEF
+    BorderColor #884EA0
+    FontColor #5B2C6F
+}
+
+' <<database>> : Bancos de Dados e Cache (verde)
+skinparam database<<database>> {
+    BackgroundColor #D5F5E3
+    BorderColor #28B463
+    FontColor #186A3B
+}
+skinparam component<<database>> {
+    BackgroundColor #D5F5E3
+    BorderColor #28B463
+    FontColor #186A3B
+}
+
+' <<storage>> : Armazenamento (laranja)
+skinparam component<<storage>> {
+    BackgroundColor #FDEBD0
+    BorderColor #E67E22
+    FontColor #935116
+}
+
+' <<security>> : Segurança (vermelho)
+skinparam component<<security>> {
+    BackgroundColor #FADBD8
+    BorderColor #C0392B
+    FontColor #7B241C
+}
+
+' <<monitoring>> : Monitoramento e Observabilidade (amarelo)
+skinparam component<<monitoring>> {
+    BackgroundColor #FCF3CF
+    BorderColor #F1C40F
+    FontColor #B7950B
+}
+
+' <<cicd>> : Automação e IaC (cinza)
+skinparam component<<cicd>> {
+    BackgroundColor #EAEDED
+    BorderColor #5D6D7E
+    FontColor #2C3E50
+}
+
+
+' ARQUITETURA
+' ===========
+
+' Região Principal
+package "REGIÃO PRINCIPAL - us-east-1" {
+    
+    ' Internet Gateway e CDN
+    cloud "Internet" as internet {
+        actor "Usuários Globais" as users
+        component "CDN Global\n(CloudFront)" as cdn <<network>>
+        component "WAF\n(Web Application Firewall)" as waf <<security>>
+    }
+    
+    ' VPC Principal
+    package "VPC Principal (10.0.0.0/16)" {
+        
+        ' Zona de Disponibilidade A
+        package "Availability Zone A (us-east-1a)" {
+            package "Subnet Pública A" {
+                component "NAT Gateway A" as nat_a <<network>>
+                component "Bastion Host A" as bastion_a <<security>>
+            }
+            package "Subnet Privada App A" {
+                component "VM Linux A1" as vm_a1 <<compute>>
+                component "VM Linux A2" as vm_a2 <<compute>>
+                component "Auto Scaling Group A" as asg_a <<compute>>
+            }
+            package "Subnet Privada DB A" {
+                database "RDS Primary\n(MySQL)" as db_primary_a <<database>>
+                component "ElastiCache Redis A" as cache_a <<database>>
+            }
+        }
+        
+        ' Zona de Disponibilidade B
+        package "Availability Zone B (us-east-1b)" {
+            package "Subnet Pública B" {
+                component "NAT Gateway B" as nat_b <<network>>
+                component "Bastion Host B" as bastion_b <<security>>
+            }
+            package "Subnet Privada App B" {
+                component "VM Linux B1" as vm_b1 <<compute>>
+                component "VM Linux B2" as vm_b2 <<compute>>
+                component "Auto Scaling Group B" as asg_b <<compute>>
+            }
+            package "Subnet Privada DB B" {
+                database "RDS Standby\n(Read Replica)" as db_standby_b <<database>>
+                component "ElastiCache Redis B" as cache_b <<database>>
+            }
+        }
+                
+        ' Load Balancers
+        package "Load Balancing Layer" {
+            component "Application Load Balancer" as alb <<network>>
+            component "Target Groups" as target_groups <<network>>
+        }
+        
+        ' Serviços de Segurança
+        package "Camada de Segurança" {
+            component "Security Groups" as security_groups <<security>>
+            component "IAM Roles & Policies" as iam <<security>>
+            component "KMS\n(Key Management)" as kms <<security>>
+            component "Secrets Manager" as secrets <<security>>
+        }
+        
+        ' Monitoramento e Logs
+        package "Observabilidade" {
+            component "CloudWatch" as cloudwatch <<monitoring>>
+            component "CloudTrail" as cloudtrail <<monitoring>>
+            component "SNS\n(Notificações)" as sns <<monitoring>>
+            component "Lambda" as lambda_monitor <<compute>>
+        }
+        
+        ' Backup e Disaster Recovery
+        package "Backup & DR" {
+            component "S3 Bucket" as s3_backup <<storage>>
+            component "Glacier" as glacier <<storage>>
+        }
+    }
+}
+
+' Região Secundária para DR
+package "REGIÃO SECUNDÁRIA - us-west-2 (Disaster Recovery)" {
+    package "VPC DR (10.1.0.0/16)" {
+        component "VM Standby DR" as vm_dr <<compute>>
+        database "RDS Cross-Region\nRead Replica" as db_dr <<database>>
+        component "S3 Cross-Region" as s3_dr <<storage>>
+        component "Route 53\n(DNS Failover)" as route53_dr <<network>>
+    }
+}
+
+' Serviços Globais
+package "Serviços Globais AWS" {
+    component "Route 53\n(DNS Global)" as route53 <<network>>
+    component "Certificate Manager" as acm <<security>>
+    component "CloudFormation\n(IaC)" as cloudformation <<cicd>>
+}
+
+' RELACIONAMENTOS
+' ================
+users --> cdn
+cdn --> waf
+waf --> route53
+route53 --> alb
+
+alb --> target_groups
+target_groups --> vm_a1
+target_groups --> vm_a2
+target_groups --> vm_b1
+target_groups --> vm_b2
+
+asg_a <--> vm_a1 : Manages
+asg_a <--> vm_a2 : Manages
+asg_b <--> vm_b1 : Manages
+asg_b <--> vm_b2 : Manages
+
+vm_a1 --> db_primary_a
+vm_a2 --> db_primary_a
+vm_b1 --> db_primary_a
+vm_b2 --> db_standby_b
+
+db_primary_a --> db_standby_b : Sync
+db_primary_a --> db_dr : Async
+
+vm_a1 --> cache_a
+vm_b1 --> cache_b
+cache_a --> cache_b : Replication
+
+security_groups --> alb
+security_groups --> vm_a1
+security_groups --> db_primary_a
+
+cloudwatch --> alb
+cloudwatch --> vm_a1
+cloudwatch --> db_primary_a
+cloudwatch --> sns
+sns --> lambda_monitor
+
+db_primary_a --> s3_backup
+s3_backup --> glacier
+s3_backup --> s3_dr
+@enduml
